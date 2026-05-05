@@ -3,6 +3,7 @@ import glob
 import io
 import json
 import os
+import pickle
 import sqlite3
 import threading
 import time
@@ -22,6 +23,24 @@ LOG_DIRS = [
 _file_cache   = {}
 _device_cache = None
 _cache_lock   = threading.Lock()
+
+DISK_CACHE_FILE = os.path.expanduser("~/.wardriver_cache.pkl")
+
+
+def _load_disk_cache():
+    try:
+        with open(DISK_CACHE_FILE, "rb") as f:
+            return pickle.load(f)
+    except Exception:
+        return {"csv": {}, "kismet": {}}
+
+
+def _save_disk_cache(dc):
+    try:
+        with open(DISK_CACHE_FILE, "wb") as f:
+            pickle.dump(dc, f, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as e:
+        print(f"disk cache write error: {e}")
 
 
 def classify_encryption(crypt_string):
@@ -95,6 +114,17 @@ def parse_wiglecsv_full(path):
                 track.append((epoch, lat, lon))
             except ValueError:
                 pass
+
+    # deduplicate + downsample track per file before caching
+    if track:
+        track.sort(key=lambda x: x[0])
+        deduped = [track[0]]
+        for pt in track[1:]:
+            if abs(pt[1]-deduped[-1][1]) > 1e-5 or abs(pt[2]-deduped[-1][2]) > 1e-5:
+                deduped.append(pt)
+        step = max(1, len(deduped) // 2000)
+        track = deduped[::step]
+
     return gps, track
 
 
@@ -165,31 +195,61 @@ def rebuild_cache():
 
     csv_files    = sorted(iter_files("wiglecsv"))
     kismet_files = sorted(iter_files("kismet"))
-    all_files    = csv_files + kismet_files
 
-    changed_csv    = [p for p in csv_files    if _file_cache.get(p) != _safe_mtime(p)]
-    changed_kismet = [p for p in kismet_files if _file_cache.get(p) != _safe_mtime(p)]
+    # load per-file disk cache
+    dc        = _load_disk_cache()
+    csv_dc    = dc.get("csv",    {})
+    kismet_dc = dc.get("kismet", {})
+    dc_dirty  = False
 
-    if not changed_csv and not changed_kismet and _device_cache is not None:
-        return
+    # find files missing from or changed since disk cache
+    csv_missing    = [p for p in csv_files    if csv_dc.get(p,    (None,))[0] != _safe_mtime(p)]
+    kismet_missing = [p for p in kismet_files if kismet_dc.get(p, (None,))[0] != _safe_mtime(p)]
 
-    # parse CSV files in parallel (single-pass: GPS + track together)
-    gps_data    = {}
-    all_track   = []
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        for gps, track in ex.map(parse_wiglecsv_full, csv_files):
-            for mac, val in gps.items():
-                if mac not in gps_data or val[2] > gps_data[mac][2]:
-                    gps_data[mac] = val
-            all_track.extend(track)
+    if not csv_missing and not kismet_missing and _device_cache is not None:
+        return  # nothing changed, memory cache still valid
 
-    # parse kismet files in parallel
+    # parse only new/changed CSV files
+    if csv_missing:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for path, (gps, track) in zip(csv_missing, ex.map(parse_wiglecsv_full, csv_missing)):
+                m = _safe_mtime(path)
+                if m:
+                    csv_dc[path] = (m, gps, track)
+                    dc_dirty = True
+
+    # parse only new/changed kismet files
+    if kismet_missing:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for path, enc in zip(kismet_missing, ex.map(parse_kismet_db, kismet_missing)):
+                m = _safe_mtime(path)
+                if m:
+                    kismet_dc[path] = (m, enc)
+                    dc_dirty = True
+
+    if dc_dirty:
+        _save_disk_cache({"csv": csv_dc, "kismet": kismet_dc})
+
+    # merge from disk cache
+    gps_data  = {}
+    all_track = []
+    for p in csv_files:
+        if p not in csv_dc:
+            continue
+        _, gps, track = csv_dc[p]
+        for mac, val in gps.items():
+            if mac not in gps_data or val[2] > gps_data[mac][2]:
+                gps_data[mac] = val
+        all_track.extend(track)
+
     enc_data = {}
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        for result in ex.map(parse_kismet_db, kismet_files):
-            for mac, val in result.items():
-                if mac not in enc_data or (val["crypt"] and not enc_data[mac]["crypt"]):
-                    enc_data[mac] = val
+    for p in kismet_files:
+        if p not in kismet_dc:
+            continue
+        _, enc = kismet_dc[p]
+        for mac, val in enc.items():
+            if mac not in enc_data or (val["crypt"] and not enc_data[mac]["crypt"]):
+                enc_data[mac] = val
 
     # merge
     all_macs = set(gps_data) | set(enc_data)
