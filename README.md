@@ -1,6 +1,6 @@
 # wardriver
 
-kismet-based wardriving setup with GPS map tracking.  
+kismet-based wardriving setup with a post-session dashboard for exploring captured data.  
 works on: xubuntu, raspberry pi os, any debian-based system.
 
 ## hardware
@@ -54,23 +54,39 @@ cgps -s
 
 wait 1-2 minutes outside for a fix. kismet will log GPS coordinates with every network found.
 
-## viewing on a map
+## dashboard
 
-**during a session** — kismet's web ui at http://localhost:2501 shows a live map
+`app.py` is a Flask dashboard for exploring your captured data after a session.
 
-**after a session** — export your GPS track:
-
-```bash
-~/export-map.sh
-```
-
-then open in gpsprune (installed by setup.sh):
+**install dependencies:**
 
 ```bash
-gpsprune ~/kismet-logs/yoursession.gpx
+pip3 install flask
 ```
 
-gpsprune shows your route on an OpenStreetMap with all detected networks plotted.
+**run:**
+
+```bash
+python3 app.py
+```
+
+open **http://localhost:5050** in your browser.
+
+the dashboard reads all `.kismet` and `.wiglecsv` files from `~/kismet-logs/` and `~/wardriver/kismet-logs/` automatically. it caches everything in memory and refreshes every 60 seconds.
+
+**features:**
+
+- interactive map with zoom-out clustering (CartoDB dark tiles)
+- encryption donut chart — click segments to filter the map
+- channel distribution bar chart (2.4 / 5 / 6 GHz color-coded)
+- signal strength (RSSI) histogram
+- top SSIDs list
+- GPS route polyline overlay showing where you drove
+- stats: total devices, open networks, bluetooth count, session count
+
+encryption is read from the `.kismet` SQLite databases. GPS coordinates come from the `.wiglecsv` files. the two are joined by MAC address.
+
+**during a session** — kismet's own web ui at http://localhost:2501 shows a live map
 
 ## upload to wigle.net
 
