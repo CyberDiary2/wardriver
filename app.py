@@ -213,9 +213,9 @@ def rebuild_cache():
 
     wifi    = [d for d in devices if d["enc"] != "BT"]
     bt_devs = [d for d in devices if d["enc"] == "BT"]
-    enc_counts = dict(Counter(d["enc"] for d in wifi))
+    enc_counts = dict(Counter(d["enc"] for d in devices))
 
-    # channel distribution
+    # channel distribution (wifi only)
     channel_counts = {}
     for d in wifi:
         ch = (d.get("ch") or "").strip()
@@ -572,8 +572,8 @@ const ENC = {
   WPA:  { color: '#e08030' },
   WEP:  { color: '#c84848' },
   Open: { color: '#5a9a8a' },
+  BT:   { color: '#9870c0' },
 };
-const BT_COLOR    = '#9870c0';
 const TRACK_COLOR = '#e09050';
 
 // ── map ──
@@ -600,7 +600,7 @@ const activeEnc = new Set(Object.keys(ENC));
 let encCounts   = {};
 
 function isBT(d)     { return d.enc === 'BT'; }
-function encColor(d) { return isBT(d) ? BT_COLOR : (ENC[d.enc]?.color || '#888'); }
+function encColor(d) { return ENC[d.enc]?.color || '#888'; }
 
 function rssiWidth(rssi) {
   return Math.max(4, Math.min(100, ((rssi + 90) / 60) * 100));
@@ -612,7 +612,6 @@ function rssiColor(rssi) {
 }
 
 function visible(d) {
-  if (isBT(d)) return false; // BT devices are hidden for now (shown in header count only)
   return activeEnc.has(d.enc);
 }
 
@@ -720,10 +719,6 @@ function buildMapLegend(counts) {
     row.innerHTML = `<div class="leg-dot" style="background:${meta.color}"></div><span class="leg-name">${enc}</span>`;
     el.appendChild(row);
   }
-  const btRow = document.createElement('div');
-  btRow.className = 'leg-row';
-  btRow.innerHTML = `<div class="leg-dot" style="background:${BT_COLOR}"></div><span class="leg-name">Bluetooth</span>`;
-  el.appendChild(btRow);
 }
 
 // ── channel bar chart ──
