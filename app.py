@@ -324,9 +324,8 @@ def rebuild_cache():
         "devices":        [d for d in devices if d["lat"] and d["lon"]],
     }
 
-    new_mtimes = {p: _safe_mtime(p) for p in all_files}
     with _cache_lock:
-        _file_cache   = new_mtimes
+        _file_cache   = {p: _safe_mtime(p) for p in csv_files + kismet_files}
         _device_cache = result
 
 
